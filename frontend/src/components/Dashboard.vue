@@ -207,57 +207,29 @@
 
                             <v-list>
 
-                                <v-list-item>
+                                <v-card class="pa-4">
 
-                                    <template #title>
-                                        Random Forest
-                                    </template>
+  <div class="text-h6 mb-4">
+    Model Performance
+  </div>
 
-                                    <template #subtitle>
+  <h3>Random Forest</h3>
 
-                                        Accuracy:
-                                        {{ metrics.random_forest?.accuracy?.toFixed(3) }}
+  <p>Accuracy: {{ metrics.random_forest?.accuracy?.toFixed(3) }}</p>
+  <p>Precision: {{ metrics.random_forest?.precision?.toFixed(3) }}</p>
+  <p>Recall: {{ metrics.random_forest?.recall?.toFixed(3) }}</p>
+  <p>F1-score: {{ metrics.random_forest?.f1?.toFixed(3) }}</p>
 
-                                        <br>
+  <v-divider class="my-4"/>
 
-                                        Precision:
-                                        {{ metrics.random_forest?.precision?.toFixed(3) }}
+  <h3>Deep Learning</h3>
 
-                                        <br>
+  <p>Accuracy: {{ metrics.deep_learning?.accuracy?.toFixed(3) }}</p>
+  <p>Precision: {{ metrics.deep_learning?.precision?.toFixed(3) }}</p>
+  <p>Recall: {{ metrics.deep_learning?.recall?.toFixed(3) }}</p>
+  <p>F1-score: {{ metrics.deep_learning?.f1?.toFixed(3) }}</p>
 
-                                        Recall:
-                                        {{ metrics.random_forest?.recall?.toFixed(3) }}
-
-                                    </template>
-
-                                </v-list-item>
-
-                                <v-divider />
-
-                                <v-list-item>
-
-                                    <template #title>
-                                        Deep Learning
-                                    </template>
-
-                                    <template #subtitle>
-
-                                        Accuracy:
-                                        {{ metrics.deep_learning?.accuracy?.toFixed(3) }}
-
-                                        <br>
-
-                                        Precision:
-                                        {{ metrics.deep_learning?.precision?.toFixed(3) }}
-
-                                        <br>
-
-                                        Recall:
-                                        {{ metrics.deep_learning?.recall?.toFixed(3) }}
-
-                                    </template>
-
-                                </v-list-item>
+</v-card>
 
                             </v-list>
 
@@ -622,7 +594,7 @@ async function loadKpis() {
 
         const kpiResponse = await api.get("/kpis")
         const metricResponse = await api.get("/metrics")
-
+        console.log(metricResponse.data)
         kpis.value = kpiResponse.data
         metrics.value = metricResponse.data
 
