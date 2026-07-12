@@ -1,16 +1,33 @@
 import os
 import json
+from typing import Any
+
 import joblib
+import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ART_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
+import train
+
+
+# =========================================================
+# Putanje
+# =========================================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ART_DIR = os.path.join(BASE_DIR, "artifacts")
+MODEL_DIR = os.path.join(BASE_DIR, "models")
+
+
+# =========================================================
+# FastAPI aplikacija
+# =========================================================
+
 app = FastAPI(
     title="Heart Attack Analytics API",
     version="1.0"
@@ -30,20 +47,95 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-rf_model = joblib.load(os.path.join(ART_DIR, "rf_model.joblib"))
-preprocessor = joblib.load(os.path.join(ART_DIR, "preprocessor.joblib"))
-dl_model = tf.keras.models.load_model(os.path.join(ART_DIR, "dl_model.keras"))
+
+# =========================================================
+# Modeli
+# =========================================================
+
+rf_model: Any = None
+preprocessor: Any = None
+dl_model: Any = None
+
+
+def load_models():
+    global rf_model
+    global preprocessor
+    global dl_model
+
+    rf_path = os.path.join(
+        MODEL_DIR,
+        "rf_model.joblib"
+    )
+
+    preprocessor_path = os.path.join(
+        MODEL_DIR,
+        "preprocessor.joblib"
+    )
+
+    dl_path = os.path.join(
+        MODEL_DIR,
+        "dl_model.keras"
+    )
+
+    if not os.path.exists(rf_path):
+        raise FileNotFoundError(
+            f"Random Forest model nije pronađen: {rf_path}"
+        )
+
+    if not os.path.exists(preprocessor_path):
+        raise FileNotFoundError(
+            f"Preprocessor nije pronađen: {preprocessor_path}"
+        )
+
+    if not os.path.exists(dl_path):
+        raise FileNotFoundError(
+            f"Deep Learning model nije pronađen: {dl_path}"
+        )
+
+    rf_model = joblib.load(rf_path)
+
+    preprocessor = joblib.load(
+        preprocessor_path
+    )
+
+    dl_model = tf.keras.models.load_model(
+        dl_path
+    )
+
+    print("Modeli su učitani iz models foldera.")
+
+
+load_models()
+
+
+# =========================================================
+# JSON podaci
+# =========================================================
 
 def load_json(filename):
-    path = os.path.join(ART_DIR, filename)
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            return json.load(f)
-    return {}
+    path = os.path.join(
+        ART_DIR,
+        filename
+    )
+
+    if not os.path.exists(path):
+        return {}
+
+    with open(
+        path,
+        "r",
+        encoding="utf-8"
+    ) as file:
+        return json.load(file)
+
 
 kpis = load_json("kpis.json")
 metrics = load_json("metrics.json")
 
+
+# =========================================================
+# Model zahtjeva za predikciju
+# =========================================================
 
 class PredictRequest(BaseModel):
     age: int
@@ -57,25 +149,104 @@ class PredictRequest(BaseModel):
     diabetes: int
     family_history: int
 
+
+# =========================================================
+# Osnovne rute
+# =========================================================
+
+@app.get("/")
+def root():
+    return {
+        "message": "Heart Attack Analytics API",
+        "documentation": "/docs"
+    }
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok"
+    }
+
 
 @app.get("/kpis")
 def get_kpis():
     return kpis
 
+
 @app.get("/metrics")
 def get_metrics():
     return metrics
 
+
 @app.get("/plots")
 def get_plots():
-    files = [f for f in os.listdir(ART_DIR) if f.endswith(".png")]
-    return {"plots": files}
+    files = sorted(
+        filename
+        for filename in os.listdir(ART_DIR)
+        if filename.lower().endswith(".png")
+    )
+
+    return {
+        "plots": files
+    }
+
+
+# =========================================================
+# Ponovno treniranje
+# =========================================================
+
+@app.post("/retrain")
+def retrain_models():
+    global kpis
+    global metrics
+
+    try:
+        result = train.main()
+
+        # Učitavanje novostvorenih modela
+        load_models()
+
+        # Učitavanje novih statistika
+        kpis = load_json("kpis.json")
+        metrics = load_json("metrics.json")
+
+        return {
+            "status": "success",
+            "message": (
+                "Modeli, metrike, KPI pokazatelji "
+                "i EDA grafovi uspješno su ažurirani."
+            ),
+            "result": result
+        }
+
+    except Exception as error:
+        print(f"Retraining error: {error}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Ponovno treniranje nije uspjelo: "
+                f"{error}"
+            )
+        )
+
+
+# =========================================================
+# Predikcija
+# =========================================================
 
 @app.post("/predict")
 def predict(req: PredictRequest):
+    if (
+        rf_model is None
+        or preprocessor is None
+        or dl_model is None
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Modeli nisu učitani."
+        )
 
     input_data = req.model_dump()
 
@@ -102,20 +273,53 @@ def predict(req: PredictRequest):
         "stress_level": input_data["stress_level"]
     }
 
-    df = pd.DataFrame([full_input])
+    sample_df = pd.DataFrame(
+        [full_input]
+    )
 
-    rf_pred = float(rf_model.predict(df)[0])
+    try:
+        rf_pred = float(
+            rf_model.predict_proba(
+                sample_df
+            )[0][1]
+        )
 
-    X = preprocessor.transform(df)
-    if hasattr(X, "toarray"):
-        X = X.toarray()
+        transformed_data = preprocessor.transform(
+            sample_df
+        )
 
-    dl_pred = float(dl_model.predict(X, verbose=0)[0][0])
+        if hasattr(transformed_data, "toarray"):
+            transformed_data = transformed_data.toarray()
 
-    rf_pred = max(0, min(1, rf_pred))
-    dl_pred = max(0, min(1, dl_pred))
+        transformed_data = np.asarray(
+            transformed_data,
+            dtype=np.float32
+        )
 
-    final_score = (rf_pred + dl_pred) / 2
+        dl_pred = float(
+            dl_model.predict(
+                transformed_data,
+                verbose=0
+            )[0][0]
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Predikcija nije uspjela: {error}"
+        )
+
+    rf_pred = float(
+        np.clip(rf_pred, 0.0, 1.0)
+    )
+
+    dl_pred = float(
+        np.clip(dl_pred, 0.0, 1.0)
+    )
+
+    final_score = (
+        rf_pred + dl_pred
+    ) / 2
 
     if final_score < 0.33:
         risk = "Low Risk 🟢"
